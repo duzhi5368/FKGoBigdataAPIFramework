@@ -64,6 +64,10 @@ func registerAllRoute(ws *restful.WebService) error {
 func StartServe(commandLine cmd_line.SAppCommandLine) error {
 	config.InitConfig(commandLine.ConfigFilePath)
 	auth_storage.InitKey(commandLine.KeyFilePath)
+	
+	restful.Filter(OPTIONSFilter)
+	restful.Filter(EnableCORSFilter)
+	
 	ws := new(restful.WebService)
 	err := registerAllRoute(ws)
 	if err != nil {
@@ -73,4 +77,29 @@ func StartServe(commandLine cmd_line.SAppCommandLine) error {
 	restful.Add(ws)
 	Log.Println("Listen port: ", config.Config.ListenPort)
 	return http.ListenAndServe(fmt.Sprintf(":%d", config.Config.ListenPort), nil)
+}
+
+// 开启CORS返回
+func EnableCORSFilter(req *restful.Request, resp *restful.Response, chain *restful.FilterChain) {
+	if origin := req.Request.Header.Get("Origin"); origin != "" {
+		resp.AddHeader("Access-Control-Allow-Origin", origin)
+	}
+	chain.ProcessFilter(req, resp)
+}
+
+// 针对CORS的非简单请求做的额外处理
+func OPTIONSFilter(req *restful.Request, resp *restful.Response, chain *restful.FilterChain) {
+	if "OPTIONS" != req.Request.Method {
+		chain.ProcessFilter(req, resp)
+		return
+	}
+
+	archs := req.Request.Header.Get(restful.HEADER_AccessControlRequestHeaders)
+	methods := "GET, POST"
+	origin := "*"
+
+	resp.AddHeader(restful.HEADER_Allow, methods)
+	resp.AddHeader(restful.HEADER_AccessControlAllowOrigin, origin)
+	resp.AddHeader(restful.HEADER_AccessControlAllowHeaders, archs)
+	resp.AddHeader(restful.HEADER_AccessControlAllowMethods, methods)
 }
