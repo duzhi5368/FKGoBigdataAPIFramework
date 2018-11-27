@@ -1,0 +1,294 @@
+package api_mutil_level_marketing
+
+import (
+	. "api_common"
+	"api_skynet"
+	"encoding/json"
+	"fmt"
+	"github.com/emicklei/go-restful"
+	"github.com/johnnadratowski/golang-neo4j-bolt-driver"
+	"io/ioutil"
+	"reflect"
+	. "slog"
+	"strconv"
+	//"strings"
+)
+
+type down_agent_request struct {
+	LoginName string `json:"login_name"` // 用户名
+	ProductID string `json:"product_id"` // 产品ID
+}
+
+// 单个用户详情
+type per_agent_info struct {
+	LoginName          string   `json:"login_name"`
+	PhoneNumber        string   `json:"phone_number"`
+	BankCardNumberList []string `json:"bank_card_number_list"`
+	MobileDeviceID     string   `json:"mobile_device_id"`
+	PCDeviceID         string   `json:"pc_device_id"`
+	RealName           string   `json:"real_name"`
+	RegisteIP          string   `json:"regsite_ip"`
+	LoginIP            string   `json:"login_ip"`
+	Domain             string   `json:"domain"`
+	Level              int      `json:"level"`
+}
+
+type down_agent_response struct {
+	LoginName  string           `json:"login_name"` // 申请的用户名
+	Level      int              `json:"level"`      // 申请的用户等级
+	AgentInfos []per_agent_info `json:"agent_infos"`
+}
+
+func (p down_agent_request) DumpInfo() string {
+	t := reflect.TypeOf(p)
+	v := reflect.ValueOf(p)
+	var result = "\n==========================================\n"
+	result += "Struct : 【" + t.Name() + "】\n"
+	for i := 0; i < t.NumField(); i++ {
+		typeField := t.Field(i)
+		valueField := v.Field(i)
+		var value = ""
+		switch valueField.Kind() {
+		case reflect.Invalid:
+			value = "invalid"
+		case reflect.String:
+			value = "\"" + valueField.String() + "\""
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			value = strconv.Itoa(int(valueField.Int()))
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			value = strconv.FormatUint(v.Uint(), 10)
+		case reflect.Bool:
+			value = strconv.FormatBool(bool(valueField.Bool()))
+		case reflect.Chan, reflect.Func, reflect.Ptr, reflect.Slice, reflect.Map:
+			value = v.Type().String() + " 0x" + strconv.FormatUint(uint64(v.Pointer()), 16)
+		default: // reflect.Array, reflect.Struct, reflect.Interface
+			value = v.Type().String() + " value"
+		}
+		result += fmt.Sprintf("%d. %v (%v) = %s \n", i+1, typeField.Name, typeField.Type.Name(), value)
+	}
+	result += "=========================================="
+	return result
+}
+
+func (p down_agent_request) SafeCheck() error {
+	if !api_skynet.IsProductListValid(p.ProductID) {
+		return fmt.Errorf("check param failed: Unspport PID")
+	}
+	if p.LoginName == "" {
+		return fmt.Errorf("check param failed: LoginName must not be empty")
+	}
+	return nil
+}
+
+func (p *down_agent_response) FillBaseByRequest(request *down_agent_request) {
+	p.LoginName = request.LoginName
+}
+
+func OnDownAgentPropertyHandler(req *restful.Request, resp *restful.Response) *ResponceStruct {
+	body := req.Request.Body
+	defer body.Close()
+
+	content, err := ioutil.ReadAll(body)
+	if err != nil {
+		return CreateErrResponse("OnDownAgentPropertyHandler", err)
+	}
+
+	var reqParameter down_agent_request
+	err = json.Unmarshal(content, &reqParameter)
+	if err != nil {
+		return CreateErrResponse("OnDownAgentPropertyHandler", err)
+	}
+
+	err = reqParameter.SafeCheck()
+	if err != nil {
+		return CreateErrResponse("OnDownAgentPropertyHandler", err)
+	}
+	Log.Println(reqParameter.DumpInfo())
+
+	var response down_agent_response
+	response.FillBaseByRequest(&reqParameter)
+
+	// BEGIN
+	driver := golangNeo4jBoltDriver.NewDriver()
+	neo4jConfig := "bolt://neo4j:skynetAdmin@iv66.net@skynet-agent-db.ibds.svc.cluster.local:7687"
+	//neo4jConfig := "bolt://neo4j:IBDSAdmin@iv66.net@neo4j-community.ibds.svc.cluster.local:7687"
+	conn, err := driver.OpenNeo(neo4jConfig)
+	Log.Info("connecting: " + neo4jConfig)
+	defer conn.Close()
+
+	if err != nil {
+		return CreateErrResponse("OnDownAgentPropertyHandler", err)
+	}
+
+	userName := reqParameter.ProductID + "_" + reqParameter.LoginName
+	queryString := "MATCH " +
+		"(u:Agent)" +
+		"-[lower_r:AGENT_PARENT*1..]->" +
+		"(:Agent{user_id:'" + userName + "'})" +
+		"-[upper_r:AGENT_PARENT*1..]->" +
+		"(:Agent {parent_id:\"\"}) " +
+		"RETURN u.user_id, u.phone_no, u.bank_account, u.mobile_uuid, u.pc_browser_id, u.real_name, " +
+		"u.register_ip, u.previous_ip, u.last_login_domain, length(lower_r) + length(upper_r) + 1 AS level " +
+		"UNION ALL " +
+		"MATCH (:Agent{user_id:'" + userName + "'})" +
+		"-[:AGENT_PARENT*1..]->" +
+		"(u:Agent)" +
+		"-[r:AGENT_PARENT*1..]->" +
+		"(:Agent {parent_id:\"\"}) " +
+		"RETURN u.user_id, u.phone_no, u.bank_account, u.mobile_uuid, u.pc_browser_id, u.real_name, " +
+		"u.register_ip, u.previous_ip, u.last_login_domain, length(r) + 1 AS level " +
+		"UNION ALL " +
+		"MATCH (u:Agent{user_id:'" + userName + "'})" +
+		"-[r:AGENT_PARENT*1..]->" +
+		"(:Agent {parent_id:\"\"}) " +
+		"RETURN u.user_id, u.phone_no, u.bank_account, u.mobile_uuid, u.pc_browser_id, u.real_name, " +
+		"u.register_ip, u.previous_ip, u.last_login_domain, length(r) + 1 AS level;"
+
+	data, _, _, err := conn.QueryNeoAll(queryString, nil)
+	if err != nil {
+		return CreateErrResponse("OnDownAgentPropertyHandler", err)
+	}
+
+	nTotalParamsNum := 10 // 参数个数，注意每次修改都要检查这里
+	for i := range data {
+		var info per_agent_info
+		for j, row := range data[i] {
+			switch j % nTotalParamsNum {
+			case 0:
+				switch row.(type) {
+				case nil:
+					break
+				case string:
+					tmpName := row.(string)
+					if len(tmpName) > 3 {
+						info.LoginName = tmpName[4:]
+					} else {
+						info.LoginName = ""
+					}
+					break
+				}
+				break
+			case 1:
+				switch row.(type) {
+				case nil:
+					break
+				case string:
+					info.PhoneNumber = row.(string)
+					break
+				}
+				break
+			case 2:
+				//BankCardNumberStr := row.(string)
+				switch row.(type) {
+				case nil:
+					break
+				case string:
+					info.BankCardNumberList = append(info.BankCardNumberList, row.(string))
+					break
+				case []string:
+					aInterface := row.([]interface{})
+					BankCardNumberList := make([]string, len(aInterface))
+					for i, v := range aInterface {
+						BankCardNumberList[i] = v.(string)
+					}
+					for _, bankCardNumber := range BankCardNumberList {
+						info.BankCardNumberList = append(info.BankCardNumberList, bankCardNumber)
+					}
+					break
+				}
+				/*
+					BankCardNumberStr := row.(string)
+					if len(BankCardNumberStr) <= 2 {
+						break
+					}
+					strArray := BankCardNumberStr[1 : len(BankCardNumberStr)-1]
+					bankCardNumberList := strings.Split(strArray, ",")
+					for _, bankCardNumber := range bankCardNumberList {
+						info.BankCardNumberList = append(info.BankCardNumberList, bankCardNumber)
+					}
+				*/
+				/*
+					BankCardNumberList := row.([]string)
+					for _, bankCardNumber := range BankCardNumberList {
+						info.BankCardNumberList = append(info.BankCardNumberList, bankCardNumber)
+					}
+				*/
+				break
+			case 3:
+				switch row.(type) {
+				case nil:
+					break
+				case string:
+					info.MobileDeviceID = row.(string)
+					break
+				}
+				break
+			case 4:
+				switch row.(type) {
+				case nil:
+					break
+				case string:
+					info.PCDeviceID = row.(string)
+					break
+				}
+				break
+			case 5:
+				switch row.(type) {
+				case nil:
+					break
+				case string:
+					info.RealName = row.(string)
+					break
+				}
+				break
+			case 6:
+				switch row.(type) {
+				case nil:
+					break
+				case string:
+					info.RegisteIP = row.(string)
+					break
+				}
+				break
+			case 7:
+				switch row.(type) {
+				case nil:
+					break
+				case string:
+					info.LoginIP = row.(string)
+					break
+				}
+				break
+			case 8:
+				switch row.(type) {
+				case nil:
+					break
+				case string:
+					info.Domain = row.(string)
+					break
+				}
+				break
+			case 9:
+				switch row.(type) {
+				case nil:
+					break
+				case string:
+					info.Level = int(row.(int64))
+					break
+				}
+				break
+			}
+		}
+
+		if info.LoginName == reqParameter.LoginName {
+			response.Level = info.Level
+		} else {
+			//if info.LoginName != "" {
+			response.AgentInfos = append(response.AgentInfos, info)
+			//}
+		}
+	}
+
+	// END
+	return CreateSuccessResponse(response)
+}
