@@ -171,6 +171,7 @@ func OnESTestHandler(req *restful.Request, resp *restful.Response) *ResponceStru
 	}
 
 	Log.Println("ES hit = ", successedCount+failedCount, " successed = ", successedCount, " failed = ", failedCount)
+	client.close()
 	// END
 
 	return CreateSuccessResponse(response)
