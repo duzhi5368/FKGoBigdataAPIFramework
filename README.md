@@ -1,1 +1,3 @@
-- Version 1.0.0 by FreeKnight
+- Version 1.0.2 by FreeKnight
+- add Neo4j support.
+- fix bugs: ES didn't free memory.
