@@ -1,4 +1,4 @@
-package api_mutil_level_marketing
+﻿package api_mutil_level_marketing
 
 import (
 	. "api_common"
@@ -110,8 +110,8 @@ func OnDownAgentPropertyHandler(req *restful.Request, resp *restful.Response) *R
 
 	// BEGIN
 	driver := golangNeo4jBoltDriver.NewDriver()
-	neo4jConfig := "bolt://neo4j:skynetAdmin@iv66.net@skynet-agent-db.ibds.svc.cluster.local:7687"
-	//neo4jConfig := "bolt://neo4j:IBDSAdmin@iv66.net@neo4j-community.ibds.svc.cluster.local:7687"
+	neo4jConfig := "bolt://neo4j:skynetAdmin@ubisoft.com@neo4j-agent-db.ibds.svc.cluster.local:7687"
+	//neo4jConfig := "bolt://neo4j:IBDSAdmin@ubisoft.com@neo4j-community.ibds.svc.cluster.local:7687"
 	conn, err := driver.OpenNeo(neo4jConfig)
 	Log.Info("connecting: " + neo4jConfig)
 	defer conn.Close()
